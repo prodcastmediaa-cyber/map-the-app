@@ -22,7 +22,9 @@ echo "✓ Config directory: $CONFIG_DIR"
 
 # ── 2. Make scripts executable ─────────────────────────────────────────────
 chmod +x "$REPO_DIR/scripts/"*.sh "$REPO_DIR/scripts/"*.py
+ln -sf "$REPO_DIR/scripts/restart-clean.sh" "$HOME/Desktop/restart-clean.command" 2>/dev/null || true
 echo "✓ Scripts made executable"
+echo "✓ restart-clean.command linked to Desktop (saves layout before restart)"
 
 # ── 3. Freeze desktop order (stop macOS shuffling spaces) ──────────────────
 defaults write com.apple.dock mru-spaces -bool false
@@ -66,6 +68,7 @@ echo "   • App-switching stays on current desktop"
 echo "   • Ctrl+1–10 shortcuts enabled"
 echo "   • VS Code layout saves on every shutdown"
 echo "   • VS Code layout restores on every boot"
+echo "   • restart-clean.command on Desktop — saves layout then does a clean restart"
 echo ""
 echo "⚠️  Manual steps (2 quick ones — do these now):"
 echo ""
