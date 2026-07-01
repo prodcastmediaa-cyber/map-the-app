@@ -4,11 +4,19 @@
 # on the correct desktop with the correct size. Runs at login via LaunchAgent.
 
 LAYOUT_FILE="$HOME/.project-map/layout.json"
-OPEN_DELAY=3
+OPEN_DELAY=5
 
 if [ ! -f "$LAYOUT_FILE" ]; then
     echo "[project-map] No layout file found at $LAYOUT_FILE — skipping restore."
     exit 0
+fi
+
+# Desktop switching and window positioning both need Accessibility permission
+# granted to osascript. Without it they fail silently — surface that clearly.
+if ! osascript -e 'tell application "System Events" to keystroke ""' 2>/tmp/projectmap-ax-check.err; then
+    echo "[project-map] ⚠ ACCESSIBILITY PERMISSION MISSING for osascript — desktop switching and"
+    echo "    window positioning will fail silently. Grant it once at:"
+    echo "    System Settings → Privacy & Security → Accessibility → add /usr/bin/osascript"
 fi
 
 python3 - "$LAYOUT_FILE" <<'PYEOF'
@@ -34,8 +42,10 @@ def switch_desktop(n):
         time.sleep(0.9)
 
 def open_and_position(path, x, y, w, h):
-    subprocess.run(["open", "-a", "Visual Studio Code", path])
-    time.sleep(int(os.environ.get("OPEN_DELAY", 3)))
+    # -n + --new-window forces a genuinely separate window instead of
+    # merging this folder into an already-open window's workspace.
+    subprocess.run(["open", "-n", "-a", "Visual Studio Code", "--args", "--new-window", path])
+    time.sleep(int(os.environ.get("OPEN_DELAY", 5)))
     script = f"""
 tell application "System Events"
     tell process "Code"
