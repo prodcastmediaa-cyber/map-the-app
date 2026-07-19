@@ -36,7 +36,7 @@ Then you restart. Or click a Dock icon. Or macOS decides to "helpfully" rearrang
          ↑ Project Map keeps this EXACTLY like this, always.
 ```
 
-### On every shutdown → saves layout
+### Every few minutes + on shutdown → saves layout
 ### On every boot → restores layout
 
 ---
@@ -52,17 +52,38 @@ flowchart TD
     E --> F([✅ Your layout is back])
     C -- No --> G([Skip — first run])
 
-    H([🔴 Mac Shutting Down]) --> I[watcher.py receives SIGTERM]
+    H([🟢 Every 5 min + on shutdown]) --> I[watcher.py]
     I --> J[save-layout.py runs]
-    J --> K[Navigate Desktop 1 → 2 → 3...]
-    K --> L[Capture every VS Code window\nproject path + x,y,width,height]
+    J --> K[Read VS Code's own storage.json\nno desktop scanning]
+    K --> L[Capture open folders + window bounds]
     L --> M[Save to ~/.project-map/layout.json]
-    M --> N([✅ Layout captured])
+    M --> N([✅ Layout always fresh])
 
     O([⚙️ macOS Settings]) --> P[mru-spaces = OFF\nSpaces never auto-rearrange]
-    O --> Q[workspaces-auto-swoosh = OFF\nClicking apps stays on current desktop]
+    O --> Q[workspaces-auto-swoosh = ON\nClicking a link jumps to the browser's desktop]
     O --> R[Ctrl+1–10 enabled\nJump to any desktop instantly]
 ```
+
+---
+
+## What's new in v2
+
+Three reliability fixes over the first release:
+
+1. **Restore no longer reopens stale sessions.** The saver now reads VS Code's own
+   `storage.json` instead of scanning every desktop with AppleScript at shutdown.
+   The old scan could never finish inside macOS's ~few-second shutdown window, so
+   `layout.json` stayed frozen at its first snapshot. The watcher also snapshots
+   every 5 minutes now, so the layout is always current.
+2. **Ctrl+1–10 shortcuts actually persist.** `enable-shortcuts.sh` now writes via
+   `defaults` (through `cfprefsd`) instead of editing the plist file directly — a
+   direct edit was silently reverted by `activateSettings -u`.
+3. **Link-follow restored.** `workspaces-auto-swoosh` is now `true`, so clicking a
+   link brings you to the desktop where your browser already is. (v1 disabled it.)
+
+> Note: the desktop lock is *positional* — `Ctrl+6` means "the 6th Space." Keep a
+> fixed number of desktops (e.g. exactly 6). If you add or remove Spaces, the
+> numbers shift.
 
 ---
 
@@ -79,8 +100,8 @@ flowchart TD
 ## Install
 
 ```bash
-git clone https://github.com/prodcastmediaa-cyber/project-map.git
-cd project-map
+git clone https://github.com/prodcastmediaa-cyber/map-the-app.git
+cd map-the-app
 bash install.sh
 ```
 
@@ -93,11 +114,11 @@ That's it. The installer handles everything automatically.
 | Step | What happens |
 |------|-------------|
 | Lock desktop order | `mru-spaces = false` — macOS stops reshuffling your spaces |
-| Fix app switching | `workspaces-auto-swoosh = false` — clicking Dock icons stays on current desktop |
+| Link-follow | `workspaces-auto-swoosh = true` — clicking a link jumps you to the desktop where your browser already lives |
 | Enable shortcuts | `Ctrl+1` through `Ctrl+10` — jump to any desktop instantly |
-| Save current layout | Scans all open VS Code windows, saves positions to `~/.project-map/layout.json` |
+| Save current layout | Reads VS Code's own state (`storage.json`), saves open folders to `~/.project-map/layout.json` |
 | Boot restore agent | LaunchAgent that reopens VS Code windows on the right desktops at login |
-| Shutdown watcher | Background process that saves your layout every time you shut down |
+| Layout watcher | Background process that saves your layout every 5 minutes and on shutdown |
 
 ---
 
@@ -132,14 +153,15 @@ For apps like Slack, WhatsApp, Messages that live on one specific desktop:
 ## File Structure
 
 ```
-project-map/
+map-the-app/
 ├── install.sh                          # One-command installer
 ├── uninstall.sh                        # Clean removal
 ├── scripts/
-│   ├── save-layout.py                  # Scans desktops → saves layout.json
+│   ├── save-layout.py                  # Reads VS Code storage.json → layout.json
 │   ├── restore-layout.sh               # Reads layout.json → restores windows
-│   ├── watcher.py                      # Catches shutdown signal → triggers save
-│   └── enable-shortcuts.sh             # Enables Ctrl+1–10 in Mission Control
+│   ├── watcher.py                      # Snapshots every 5 min + on shutdown
+│   ├── enable-shortcuts.sh             # Enables Ctrl+1–10 in Mission Control
+│   └── restart-clean.sh                # Saves layout, then a clean macOS restart
 ├── launchagents/
 │   ├── com.projectmap.restore.plist    # Runs restore at login
 │   └── com.projectmap.watcher.plist    # Runs watcher in background

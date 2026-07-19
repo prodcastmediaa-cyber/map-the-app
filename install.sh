@@ -26,11 +26,14 @@ ln -sf "$REPO_DIR/scripts/restart-clean.sh" "$HOME/Desktop/restart-clean.command
 echo "✓ Scripts made executable"
 echo "✓ restart-clean.command linked to Desktop (saves layout before restart)"
 
-# ── 3. Freeze desktop order (stop macOS shuffling spaces) ──────────────────
+# ── 3. Freeze desktop order + enable link-follow ───────────────────────────
+# mru-spaces=false            -> Spaces keep a fixed order (Desktop 6 stays Desktop 6)
+# workspaces-auto-swoosh=true -> clicking a link/app jumps you to the desktop
+#                                where that app's window already lives (link-follow)
 defaults write com.apple.dock mru-spaces -bool false
-defaults write com.apple.dock workspaces-auto-swoosh -bool false
+defaults write com.apple.dock workspaces-auto-swoosh -bool true
 killall Dock
-echo "✓ Desktop order locked (mru-spaces + workspaces-auto-swoosh disabled)"
+echo "✓ Desktop order locked (mru-spaces=off) + link-follow on (workspaces-auto-swoosh=on)"
 
 # ── 4. Enable Ctrl+1–10 desktop shortcuts ──────────────────────────────────
 bash "$REPO_DIR/scripts/enable-shortcuts.sh"
@@ -64,9 +67,9 @@ echo "╚═══════════════════════�
 echo ""
 echo "✅ Automated (done):"
 echo "   • Desktop order frozen — spaces never shuffle again"
-echo "   • App-switching stays on current desktop"
+echo "   • Link-follow on — clicking a link jumps you to the browser's desktop"
 echo "   • Ctrl+1–10 shortcuts enabled"
-echo "   • VS Code layout saves on every shutdown"
+echo "   • VS Code layout saves every few minutes + on shutdown"
 echo "   • VS Code layout restores on every boot"
 echo "   • restart-clean.command on Desktop — saves layout then does a clean restart"
 echo ""

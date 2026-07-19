@@ -1,168 +1,122 @@
 #!/usr/bin/env python3
 """
-Project Map — save-layout.py
-Scans every macOS desktop from left to right, captures all VS Code windows
-(project path, position, size, desktop number) and saves to layout.json.
+Project Map — save-layout.py  (v2)
 
-Triggered automatically on shutdown by the watcher. Can also be run manually:
-    python3 scripts/save-layout.py
+Captures which VS Code folders are currently open by reading VS Code's OWN
+persisted state (globalStorage/storage.json). No Mission Control / osascript
+automation, so it runs instantly and reliably — including inside the short
+window macOS gives login agents at shutdown.
+
+(v1 scanned every desktop with osascript at shutdown; macOS force-quits login
+agents within a few seconds, so that scan never finished and layout.json stayed
+frozen at its first-ever snapshot. That is the "restore reopens old sessions"
+bug — fixed here by reading VS Code's own state instead of scanning desktops.)
+
+Desktop assignment comes from a persistent path->desktop map stored inside
+layout.json under "path_desktop_map"; unknown folders go to DEFAULT_DESKTOP.
+Window bounds come straight from VS Code's own uiState.
+
+Run manually any time:  python3 scripts/save-layout.py
 """
 
-import json, os, subprocess, time, urllib.parse
+import json
+import os
+import urllib.parse
 from datetime import datetime
 
 LAYOUT_FILE = os.path.expanduser("~/.project-map/layout.json")
-MAX_DESKTOPS = 16
-SWITCH_DELAY = 0.9
+STORAGE_FILE = os.path.expanduser(
+    "~/Library/Application Support/Code/User/globalStorage/storage.json"
+)
+DEFAULT_DESKTOP = "2"
+DEFAULT_BOUNDS = {"x": 0, "y": 33, "w": 751, "h": 876}
 
 
-def load_layout():
-    if os.path.exists(LAYOUT_FILE):
-        with open(LAYOUT_FILE) as f:
+def load_json(path, default):
+    try:
+        with open(path) as f:
             return json.load(f)
-    return {"scan_desktops": list(range(1, 11)), "desktops": {}}
+    except Exception:
+        return default
+
+
+def uri_to_path(folder_uri):
+    return urllib.parse.unquote(folder_uri.replace("file://", ""))
+
+
+def get_open_windows():
+    """Read VS Code's own window state -> [{path, x, y, w, h}] for open folders."""
+    data = load_json(STORAGE_FILE, {})
+    ws = data.get("windowsState", {})
+    entries = list(ws.get("openedWindows", []))
+    last = ws.get("lastActiveWindow")
+    if last:
+        entries.append(last)
+
+    windows, seen = [], set()
+    for w in entries:
+        folder = w.get("folder")
+        if not folder:
+            continue  # skip empty windows / bare files
+        path = uri_to_path(folder)
+        if path in seen:
+            continue
+        seen.add(path)
+        ui = w.get("uiState", {})
+        windows.append({
+            "path": path,
+            "x": ui.get("x", DEFAULT_BOUNDS["x"]),
+            "y": ui.get("y", DEFAULT_BOUNDS["y"]),
+            "w": ui.get("width", DEFAULT_BOUNDS["w"]),
+            "h": ui.get("height", DEFAULT_BOUNDS["h"]),
+        })
+    return windows
+
+
+def build_path_desktop_map(prev):
+    """Persistent path->desktop map: explicit map wins, else infer from the
+    previous 'desktops' layout so existing assignments are preserved."""
+    m = dict(prev.get("path_desktop_map", {}))
+    for desktop_num, wins in prev.get("desktops", {}).items():
+        for w in wins:
+            m.setdefault(w["path"], desktop_num)
+    return m
 
 
 def save_layout(data):
     os.makedirs(os.path.dirname(LAYOUT_FILE), exist_ok=True)
-    data["saved_at"] = datetime.now().isoformat(timespec="seconds")
     with open(LAYOUT_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
 
-def press_key(key_code):
-    subprocess.run(
-        ["osascript", "-e",
-         f'tell application "System Events" to key code {key_code} using {{control down}}'],
-        capture_output=True
-    )
-
-
-def go_to_desktop_1():
-    for _ in range(MAX_DESKTOPS + 2):
-        press_key(123)   # Ctrl+Left
-        time.sleep(0.12)
-    time.sleep(0.6)
-
-
-def get_vscode_windows():
-    script = '''
-tell application "System Events"
-    set output to ""
-    if not (exists process "Code") then return output
-    repeat with win in windows of process "Code"
-        try
-            set t to title of win
-            set pos to position of win
-            set sz to size of win
-            if (item 1 of sz) > 100 then
-                set output to output & t & "|" & (item 1 of pos) & "|" & (item 2 of pos) & "|" & (item 1 of sz) & "|" & (item 2 of sz) & "\\n"
-            end if
-        end try
-    end repeat
-    return output
-end tell
-'''
-    result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
-    windows = []
-    for line in result.stdout.strip().splitlines():
-        parts = line.strip().split("|")
-        if len(parts) == 5:
-            try:
-                windows.append({
-                    "title": parts[0].strip(),
-                    "x": int(parts[1]), "y": int(parts[2]),
-                    "w": int(parts[3]), "h": int(parts[4])
-                })
-            except ValueError:
-                continue
-    return windows
-
-
-def build_title_to_path_map():
-    state_path = os.path.expanduser(
-        "~/Library/Application Support/Code/User/globalStorage/storage.json"
-    )
-    try:
-        with open(state_path) as f:
-            data = json.load(f)
-    except Exception:
-        return {}
-
-    mapping = {}
-    ws = data.get("windowsState", {})
-    windows = list(ws.get("openedWindows", []))
-    last = ws.get("lastActiveWindow")
-    if last:
-        windows.insert(0, last)
-
-    for win in windows:
-        folder_uri = win.get("folder", "")
-        if not folder_uri:
-            continue
-        path = urllib.parse.unquote(folder_uri.replace("file://", ""))
-        name = os.path.basename(path.rstrip("/"))
-        mapping[name] = path
-    return mapping
-
-
-def match_title(title, title_to_path):
-    project_name = title.split(" — ")[-1].strip() if " — " in title else title.strip()
-    for name, path in title_to_path.items():
-        if project_name.rstrip() == name.rstrip():
-            return path
-    for name, path in title_to_path.items():
-        if project_name.lower() in name.lower() or name.lower() in project_name.lower():
-            return path
-    return None
-
-
 def main():
-    layout = load_layout()
-    title_to_path = build_title_to_path_map()
-    captured = {}
-    seen_paths = set()
-    empty_streak = 0
+    prev = load_json(LAYOUT_FILE, {})
+    path_desktop = build_path_desktop_map(prev)
+    windows = get_open_windows()
 
-    print("[project-map] Scanning desktops...")
-    go_to_desktop_1()
+    if not windows:
+        # Never clobber a good layout with an empty capture (VS Code not running).
+        print("[project-map] storage.json shows no open VS Code folders — layout unchanged.")
+        return
 
-    for i in range(MAX_DESKTOPS):
-        desktop_num = i + 1
-        windows = get_vscode_windows()
+    desktops = {}
+    for w in windows:
+        d = str(path_desktop.get(w["path"], DEFAULT_DESKTOP))
+        desktops.setdefault(d, []).append(w)
+        path_desktop.setdefault(w["path"], d)
 
-        entries = []
-        for win in windows:
-            path = match_title(win["title"], title_to_path)
-            if path and path not in seen_paths:
-                seen_paths.add(path)
-                entries.append({
-                    "path": path,
-                    "x": win["x"], "y": win["y"],
-                    "w": win["w"], "h": win["h"]
-                })
+    out = dict(prev)
+    out["desktops"] = {k: desktops[k] for k in sorted(desktops, key=int)}
+    out["path_desktop_map"] = path_desktop
+    out["source"] = "storage.json"
+    out["saved_at"] = datetime.now().isoformat(timespec="seconds")
+    save_layout(out)
 
-        if entries:
-            captured[str(desktop_num)] = entries
-            empty_streak = 0
-            names = [os.path.basename(e["path"].rstrip("/")) for e in entries]
-            print(f"  Desktop {desktop_num}: {', '.join(names)}")
-        else:
-            empty_streak += 1
-            if desktop_num > 5 and empty_streak >= 3:
-                break
-
-        if i < MAX_DESKTOPS - 1:
-            press_key(124)   # Ctrl+Right
-            time.sleep(SWITCH_DELAY)
-
-    if captured:
-        layout["desktops"] = captured
-        save_layout(layout)
-        total = sum(len(v) for v in captured.values())
-        print(f"[project-map] Saved {total} windows across {len(captured)} desktops → {LAYOUT_FILE}")
-    else:
-        print("[project-map] No VS Code windows found. Layout unchanged.")
+    print(f"[project-map] Saved {len(windows)} open folder(s) across "
+          f"{len(desktops)} desktop(s) → {LAYOUT_FILE}")
+    for d in sorted(desktops, key=int):
+        names = [os.path.basename(w["path"].rstrip("/")) for w in desktops[d]]
+        print(f"  Desktop {d}: {names}")
 
 
 if __name__ == "__main__":

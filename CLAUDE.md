@@ -38,11 +38,11 @@ Then tell the user about the 2 manual steps below.
 The installer (`bash install.sh`) handles all of this without any user interaction:
 
 - ✅ Disables macOS auto-rearranging desktops (`mru-spaces = false`)
-- ✅ Disables app-switching jumping to another desktop (`workspaces-auto-swoosh = false`)
-- ✅ Enables `Ctrl+1` through `Ctrl+10` keyboard shortcuts for desktop switching
-- ✅ Scans current VS Code windows and saves layout to `~/.project-map/layout.json`
+- ✅ Enables link-follow — clicking a link jumps to the desktop where the browser already is (`workspaces-auto-swoosh = true`)
+- ✅ Enables `Ctrl+1` through `Ctrl+10` keyboard shortcuts for desktop switching (via `defaults`, so they persist)
+- ✅ Reads VS Code's own `storage.json` and saves layout to `~/.project-map/layout.json`
 - ✅ Installs LaunchAgent that restores layout on every boot
-- ✅ Installs background watcher that saves layout on every shutdown
+- ✅ Installs background watcher that saves layout every 5 minutes and on shutdown
 
 ---
 
@@ -132,15 +132,19 @@ bash uninstall.sh
 
 ## Architecture Notes
 
-- **save-layout.py**: Navigates Desktop 1 → right → detects VS Code windows via AppleScript
-  (`System Events`). Matches window titles to project paths using VS Code's internal
-  `globalStorage/storage.json`. Saves to `~/.project-map/layout.json`.
+- **save-layout.py** (v2): Reads VS Code's own `globalStorage/storage.json` to get the
+  currently-open folders and their window bounds — no Mission Control / AppleScript
+  scanning. Assigns each folder to a desktop via a persistent `path_desktop_map` in
+  `layout.json` (unknown folders → `DEFAULT_DESKTOP`). This is what makes it reliable at
+  shutdown; the v1 desktop-scan never finished in time and froze the layout.
 
 - **restore-layout.sh**: Reads `layout.json`, switches to each desktop via `Ctrl+N` key codes,
-  opens VS Code with the project path, then positions the window via AppleScript.
+  opens VS Code with the project path, then positions the window via AppleScript. (Depends on
+  the Ctrl+N shortcuts from `enable-shortcuts.sh` existing.)
 
-- **watcher.py**: Long-running background process. Catches `SIGTERM` (sent by macOS on
-  shutdown/restart) and triggers `save-layout.py` before exiting.
+- **watcher.py** (v2): Long-running background process. Runs `save-layout.py` every 5 minutes
+  AND on `SIGTERM`/`SIGINT`. Because the v2 saver only reads a file (no UI automation),
+  periodic snapshots are invisible and keep `layout.json` always fresh.
 
 - **LaunchAgents**: `com.projectmap.restore` runs once at login (`RunAtLoad=true`).
   `com.projectmap.watcher` runs continuously (`KeepAlive=true`), restarted by launchd if it crashes.
